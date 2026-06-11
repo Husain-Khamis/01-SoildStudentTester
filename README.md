@@ -1,6 +1,6 @@
 # 01 JS Tester
 
-A modern web-based tester for [reboot01](https://learn.reboot01.com) students. Built with React and Node.js, it fetches your assigned JavaScript questions, displays them by difficulty level, and runs their test cases so you can validate your solutions locally without leaving the browser.
+A modern web-based tester for piscines and checkpoints.
 
 ## Requirements
 
