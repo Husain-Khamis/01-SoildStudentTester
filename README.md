@@ -1,6 +1,6 @@
 # 01 JS Tester
 
-A modern web-based tester for piscines and checkpoints.
+A modern web-based tester for [reboot01](https://learn.reboot01.com) students, piscines and checkpoints.
 
 ## Requirements
 
