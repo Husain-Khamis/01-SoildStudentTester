@@ -1,5 +1,7 @@
 # 01 JS Tester
 
+# Project Incomplete (it's missing the compiler and test cases for all languages (Except JS))
+
 A modern web-based tester for [reboot01](https://learn.reboot01.com) students, piscines and checkpoints.
 
 ## Requirements
