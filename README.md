@@ -37,7 +37,7 @@ When a new version is released, remove the old container and image, then run aga
 ```bash
 docker stop js-tester
 docker rm js-tester
-docker rmi ghcr.io/YOUR_USERNAME/01jstester:latest
+docker rmi ghcr.io/Husain-khamis/01jstester:latest
 ```
 
 Then re-run the original run command above.
