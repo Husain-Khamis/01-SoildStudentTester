@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { runAny, testCode } from '../api'
+import AllowedFunctions from './AllowedFunctions'
 import ResultBadge from './ResultBadge'
 import Workspace from './Workspace'
 import CodeTabs from './CodeTabs'
@@ -101,7 +102,7 @@ function QuestionView({ question, lang }) {
               </span>
             </div>
 
-            <div className="flex gap-4">
+            <div className="flex gap-4 flex-wrap">
               <div>
                 <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Difficulty</p>
                 <p className="text-white text-sm font-medium">{question.difficulty}</p>
@@ -119,6 +120,7 @@ function QuestionView({ question, lang }) {
                   ))}
                 </div>
               </div>
+              <AllowedFunctions functions={question.allowedFunctions} lang={lang} />
             </div>
           </div>
 
