@@ -28,7 +28,7 @@ async function ensureImage(image) {
     }
 }
 
-function start(cid, code, timeoutMs) {
+function start(cid, code, timeoutMs, signal) {
     return new Promise((resolve) => {
         const p = spawn('docker', ['start', '-ai', cid])
         p.stdin.on('error', () => {}) // EPIPE if the container exits before reading
@@ -46,11 +46,16 @@ function start(cid, code, timeoutMs) {
             timedOut = true
             p.kill() // container itself is removed by the caller's finally
         }, timeoutMs)
+        const onAbort = () => p.kill()
+        signal?.addEventListener('abort', onAbort, { once: true })
         p.on('close', (code) => {
             clearTimeout(timer)
+            signal?.removeEventListener('abort', onAbort)
             if (output.length > MAX_OUTPUT) { output = output.slice(0, MAX_OUTPUT); truncated = true }
+            output = output.split('\n').filter((l) => !/^__RC__\d+$/.test(l.trim())).join('\n')
             if (truncated) output += '\n[output truncated]'
-            resolve({ passed: code === 0 && !timedOut, output, timedOut })
+            const stopped = !!signal?.aborted
+            resolve({ passed: code === 0 && !timedOut && !stopped, output, timedOut, ...(stopped && { stopped }) })
         })
         p.on('error', (e) => {
             clearTimeout(timer)
@@ -59,7 +64,7 @@ function start(cid, code, timeoutMs) {
     })
 }
 
-async function runInImage({ image, exercise, file, allowedFunctions = [], code, runOnly, timeoutMs }) {
+async function runInImage({ image, exercise, file, allowedFunctions = [], code, extraFile, runOnly, timeoutMs, signal }) {
     if (running >= MAX_RUNNING) {
         const err = new Error('Grader is busy, try again shortly')
         err.busy = true
@@ -74,14 +79,17 @@ async function runInImage({ image, exercise, file, allowedFunctions = [], code, 
         const args = ['create', '-i', '--label', 'solid-tester-grader', '--network', 'none', '--memory', '1g', '--cpus', '1', '--pids-limit', '256',
             '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '-w', '/jail',
             '--read-only', '--tmpfs', '/jail:rw,exec,size=512m,mode=1777', '--tmpfs', '/tmp:rw,exec,size=256m,mode=1777', '--user', '1000:1000',
-            '-e', 'HOME=/jail', '-e', `EXERCISE=${exercise}`, '-e', `FILE=${file}`, '-e', `EDITOR_FILES=${file}`,
+            '-e', 'HOME=/jail', '-e', `EXERCISE=${exercise}`, '-e', `FILE=${file}`, '-e', `EDITOR_FILES=${extraFile ? `${file},${extraFile.path}` : file}`,
             '-e', `ALLOWED_FUNCTIONS=${allowedFunctions.join(' ')}`, '-e', 'CODE_EDITOR_MODE=true',
             '-e', 'CARGO_NET_OFFLINE=true']
         if (runOnly) args.push('-e', 'CODE_EDITOR_RUN_ONLY=true')
-        args.push('--entrypoint', '/bin/sh', image, '-c', 'mkdir -p "/jail/student/$(dirname "$FILE")" && cat > "/jail/student/$FILE" && exec "$@"', 'sh', ...entrypoint)
+        if (extraFile) args.push('-e', `MAIN_FILE=${extraFile.path}`, '-e', `MAIN_CODE=${extraFile.code}`)
+        args.push('--entrypoint', '/bin/sh', image, '-c', 'mkdir -p "/jail/student/$(dirname "$FILE")" && cat > "/jail/student/$FILE" && if [ -n "$MAIN_FILE" ]; then mkdir -p "/jail/student/$(dirname "$MAIN_FILE")" && printf "%s" "$MAIN_CODE" > "/jail/student/$MAIN_FILE"; fi && exec "$@"', 'sh', ...entrypoint)
+        if (signal?.aborted) return { passed: false, output: '', timedOut: false, stopped: true }
         cid = await docker(args, 60000)
+        if (signal?.aborted) return { passed: false, output: '', timedOut: false, stopped: true }
 
-        return await start(cid, code, timeoutMs || (image.includes('rust') ? 180000 : 60000))
+        return await start(cid, code, timeoutMs || 60000, signal)
     } finally {
         running--
         if (cid) await docker(['rm', '-f', cid], 30000).catch(() => {})

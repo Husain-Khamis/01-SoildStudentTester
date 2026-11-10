@@ -154,7 +154,7 @@ router.get('/subject', async (req, res) => {
 
 function grade(runOnly) {
     return async (req, res) => {
-        const { lang, name, code } = req.body || {}
+        const { lang, name, code, main } = req.body || {}
 
         if (!SUPPORTED_LANGUAGES.includes(lang)) {
             return res.status(400).json({ error: `lang must be one of: ${SUPPORTED_LANGUAGES.join(', ')}` })
@@ -165,19 +165,37 @@ function grade(runOnly) {
             return res.status(400).json({ error: 'code must be a string up to 100KB' })
         }
 
+        if (runOnly && main != null && (typeof main !== 'string' || Buffer.byteLength(main) > MAX_CODE)) {
+            return res.status(400).json({ error: 'main must be a string up to 100KB' })
+        }
+
+        // Client gave up (Stop / closed tab): kill the container instead of running to the timeout
+        const ac = new AbortController()
+        res.on('close', () => { if (!res.writableFinished) ac.abort() })
+
         try {
             const data = await getUpstream()
             const ex = extractExercises(data.children, lang).find(e => e.name === name)
             if (!ex) return res.status(404).json({ error: 'Exercise not found' })
             if (!ex.testImage || !ex.expectedFiles?.[0]) return res.status(404).json({ error: 'Exercise has no grader' })
 
+            // Run-only: also write the subject's usage program next to the solution (path derived server-side)
+            const file = ex.expectedFiles[0]
+            let mainPath
+            if (runOnly && main) {
+                if (lang === 'go' && !file.includes('/')) mainPath = `${ex.name}/main.go`
+                else if (lang === 'rust' && file.endsWith('src/lib.rs')) mainPath = file.replace(/lib\.rs$/, 'main.rs')
+            }
+
             res.json(await deps.runInImage({
                 image: ex.testImage,
                 exercise: ex.name,
-                file: ex.expectedFiles[0],
+                file,
                 allowedFunctions: ex.allowedFunctions,
                 code,
-                runOnly
+                extraFile: mainPath && { path: mainPath, code: main },
+                runOnly,
+                signal: ac.signal
             }))
         } catch (error) {
             if (error.busy) return res.status(429).json({ error: error.message })

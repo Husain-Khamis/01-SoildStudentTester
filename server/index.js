@@ -11,6 +11,9 @@ app.use('/api/questions', questionRouter)
 
 app.use(express.static(path.join(__dirname, 'public')))
 
+// SPA fallback so reloading client routes like /questions serves the app
+app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')))
+
 app.use(questionRouter.errorHandler)
 
 require('./runner').reapOrphans().catch(() => {})

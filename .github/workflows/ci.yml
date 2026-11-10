@@ -24,7 +24,7 @@ jobs:
             client/package-lock.json
             server/package-lock.json
             e2e/package-lock.json
-      - run: npm ci && npm run lint && npm run build
+      - run: npm ci && npm run lint && npm test && npm run build
         working-directory: client
       - run: |
           docker pull ghcr.io/01-edu/test-go

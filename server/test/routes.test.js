@@ -65,6 +65,33 @@ test('/run rejects js, passes runOnly for others', async () => {
     assert.strictEqual(calls[0].runOnly, true)
 })
 
+test('main: /test ignores it, /run derives the path, bad main gives 400', async () => {
+    calls = []
+    await post('/test', { ...ok, main: 'package main' })
+    assert.strictEqual(calls[0].extraFile, undefined)
+    await post('/run', { ...ok, main: 'package main' })
+    assert.deepStrictEqual(calls[1].extraFile, { path: 'gcd/main.go', code: 'package main' })
+    await post('/run', { ...ok, main: 'package main', file: '../x' })
+    assert.strictEqual(calls[2].extraFile.path, 'gcd/main.go')
+    assert.strictEqual((await post('/run', { ...ok, main: 5 })).status, 400)
+    assert.strictEqual((await post('/run', { ...ok, main: 'a'.repeat(100 * 1024 + 1) })).status, 400)
+})
+
+test('/run accepts main: null as absent', async () => {
+    calls = []
+    assert.strictEqual((await post('/run', { ...ok, main: null })).status, 200)
+    assert.strictEqual(calls[0].extraFile, undefined)
+})
+
+test('/run ignores main for program exercises', async () => {
+    const orig = tree.children.a.attrs.expectedFiles
+    tree.children.a.attrs.expectedFiles = ['gcd/main.go']
+    calls = []
+    await post('/run', { ...ok, main: 'package main' })
+    tree.children.a.attrs.expectedFiles = orig
+    assert.strictEqual(calls[0].extraFile, undefined)
+})
+
 test('busy runner gives 429', async () => {
     busy = true
     assert.strictEqual((await post('/test', ok)).status, 429)
@@ -89,4 +116,19 @@ test('malformed JSON gives 400 without stack details', async () => {
     const text = await res.text()
     assert.strictEqual(res.status, 400)
     assert.ok(!text.includes('node_modules') && !text.includes('at '))
+})
+
+test('closing the request aborts the runner signal', async () => {
+    let signal
+    const aborted = new Promise((resolve) => {
+        router._setDeps({ runInImage: (opts) => new Promise((done) => {
+            signal = opts.signal
+            signal.addEventListener('abort', () => { resolve(); done({ stopped: true }) })
+            fetchAbort.abort()
+        }) })
+    })
+    const fetchAbort = new AbortController()
+    await fetch(base + '/test', { method: 'POST', signal: fetchAbort.signal, headers: { 'content-type': 'application/json' }, body: JSON.stringify(ok) }).catch(() => {})
+    await aborted
+    assert.ok(signal.aborted)
 })

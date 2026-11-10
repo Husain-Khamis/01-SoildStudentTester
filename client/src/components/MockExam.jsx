@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import Editor from '@monaco-editor/react'
 import { runAny, testCode } from '../api'
 import ResultBadge from './ResultBadge'
+import Workspace from './Workspace'
+import CodeTabs from './CodeTabs'
+import LongRunDialog from './LongRunDialog'
+import { useRun } from '../useRun'
+import { extractUsage } from '../usage'
 
 const THREE_HOURS = 3 * 60 * 60
-
-const LANGUAGE_MAP = {
-  js: 'javascript',
-  go: 'go',
-  rust: 'rust'
-}
 
 function formatTime(seconds) {
   const h = Math.floor(seconds / 3600).toString().padStart(2, '0')
@@ -23,9 +21,11 @@ function MockExam({ questions, lang }) {
   const [activeIndex, setActiveIndex] = useState(0)
   const [loaded, setLoaded] = useState({ subject: null, markdown: '' })
   const [codes, setCodes] = useState({})
+  const [mains, setMains] = useState({})
   const [outputs, setOutputs] = useState({})
   const [results, setResults] = useState({})
   const [busy, setBusy] = useState(false)
+  const run = useRun()
   const [timeLeft, setTimeLeft] = useState(THREE_HOURS)
   const [timeUp, setTimeUp] = useState(false)
 
@@ -66,8 +66,10 @@ function MockExam({ questions, lang }) {
     setCodes((prev) => ({ ...prev, [activeIndex]: value }))
   }
 
-  const starter = `// ${activeQuestion?.expectedFiles?.[0]}\n`
-  const code = codes[activeIndex] ?? starter
+  const file = activeQuestion?.expectedFiles?.[0]
+  const code = codes[activeIndex] ?? `// ${file}\n`
+  const usage = /(^|\/)main\.go$|src\/main\.rs$/.test(file) ? null : extractUsage(markdown)
+  const main = loadingMarkdown || usage == null ? null : (mains[activeIndex] ?? usage)
 
   async function exec(fn) {
     const i = activeIndex
@@ -76,7 +78,7 @@ function MockExam({ questions, lang }) {
     setResults((prev) => ({ ...prev, [i]: null }))
     setOut('')
     try {
-      await fn(i, setOut)
+      await run.track((signal) => fn(i, setOut, signal))
     } catch (err) {
       setOut(`Error: ${err.message}`)
     } finally {
@@ -85,13 +87,13 @@ function MockExam({ questions, lang }) {
   }
 
   const runCode = () =>
-    exec(async (i, setOut) => setOut(await runAny(lang, activeQuestion.name, code)))
+    exec(async (i, setOut, signal) => setOut((await runAny(lang, activeQuestion.name, code, main, signal)).output))
 
   const runTests = () =>
-    exec(async (i, setOut) => {
-      const data = await testCode(lang, activeQuestion.name, code)
-      setResults((prev) => ({ ...prev, [i]: data }))
-      setOut(data.output || 'No output')
+    exec(async (i, setOut, signal) => {
+      const data = await testCode(lang, activeQuestion.name, code, signal)
+      if (!data.stopped) setResults((prev) => ({ ...prev, [i]: data }))
+      setOut(data.output || (data.passed ? 'All tests passed' : 'No output'))
     })
 
   if (timeUp) {
@@ -105,6 +107,7 @@ function MockExam({ questions, lang }) {
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
+      <LongRunDialog startedAt={run.startedAt} onStop={run.stop} onKeep={run.keepWaiting} />
       <div className="bg-gray-800 border-b border-gray-700 px-4 py-2 flex items-center gap-3">
         <span className="text-xs text-gray-400 uppercase tracking-widest mr-2">Mock Exam</span>
 
@@ -130,8 +133,10 @@ function MockExam({ questions, lang }) {
       </div>
 
       {activeQuestion && (
-        <div className="flex flex-1 overflow-hidden">
-          <aside className="w-96 bg-gray-800 border-r border-gray-700 overflow-y-auto flex flex-col">
+      <Workspace
+        id="mock"
+        description={
+          <div className="overflow-y-auto h-full">
             <div className="p-4 border-b border-gray-700">
               <div className="flex items-center justify-between mb-3">
                 <h1 className="text-lg font-bold text-white">{activeQuestion.name}</h1>
@@ -161,7 +166,7 @@ function MockExam({ questions, lang }) {
               </div>
             </div>
 
-            <div className="p-4 flex-1">
+            <div className="p-4">
               {loadingMarkdown ? (
                 <p className="text-gray-500 text-sm">Loading question...</p>
               ) : (
@@ -170,68 +175,58 @@ function MockExam({ questions, lang }) {
                 </div>
               )}
             </div>
-          </aside>
-
-          <div className="flex flex-col flex-1 overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-700">
-              <p className="text-xs text-gray-400 uppercase tracking-widest">Solution</p>
-              <div className="flex items-center gap-2">
-                {busy && <span className="text-xs text-gray-400">Running… (the first test per language downloads the grader image and may take a few minutes)</span>}
-                <button
-                  onClick={runCode}
-                  disabled={busy}
-                  className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
-                >
-                  Run
-                </button>
-                <button
-                  onClick={runTests}
-                  disabled={busy}
-                  className="bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
-                >
-                  Test
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-hidden">
-              <Editor
-                height="100%"
-                language={LANGUAGE_MAP[lang]}
-                theme="vs-dark"
-                value={code}
-                onChange={handleCodeChange}
-                options={{
-                  fontSize: 14,
-                  minimap: { enabled: false },
-                  scrollBeyondLastLine: false,
-                  wordWrap: 'on',
-                  quickSuggestions: false,
-                  suggestOnTriggerCharacters: false,
-                  acceptSuggestionOnEnter: 'off',
-                  tabCompletion: 'off',
-                  wordBasedSuggestions: 'off',
-                  parameterHints: { enabled: false },
-                  hover: { enabled: false },
-                }}
-              />
-            </div>
-
-            <div className="h-48 bg-gray-950 border-t border-gray-700 flex flex-col">
-              <div className="px-4 py-2 border-b border-gray-700 flex items-center gap-3">
-                <p className="text-xs text-gray-400 uppercase tracking-widest">Output</p>
-                <ResultBadge result={results[activeIndex]} />
-              </div>
-              <div className="flex-1 overflow-y-auto p-4 font-mono text-sm text-green-400">
-                {outputs[activeIndex] ? (
-                  <pre>{outputs[activeIndex]}</pre>
-                ) : (
-                  <p className="text-gray-600">Run your code to see output here</p>
-                )}
-              </div>
+          </div>
+        }
+        toolbar={
+          <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-700">
+            <p className="text-xs text-gray-400 uppercase tracking-widest">Solution</p>
+            <div className="flex items-center gap-2">
+              {busy && <span className="text-xs text-gray-400">Running… (the first test per language downloads the grader image and may take a few minutes)</span>}
+              <button
+                onClick={runCode}
+                disabled={busy}
+                className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
+              >
+                Run
+              </button>
+              <button
+                onClick={runTests}
+                disabled={busy}
+                className="bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
+              >
+                Test
+              </button>
             </div>
           </div>
-        </div>
+        }
+        editor={
+          <CodeTabs
+            key={activeIndex}
+            lang={lang}
+            id={`mock/${activeQuestion.name}`}
+            file={file}
+            code={code}
+            onCode={handleCodeChange}
+            main={main}
+            onMain={(v) => setMains((prev) => ({ ...prev, [activeIndex]: v }))}
+          />
+        }
+        output={
+          <>
+            <div className="px-4 py-2 border-b border-gray-700 flex items-center gap-3">
+              <p className="text-xs text-gray-400 uppercase tracking-widest">Output</p>
+              <ResultBadge result={results[activeIndex]} />
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 font-mono text-sm text-green-400">
+              {outputs[activeIndex] ? (
+                <pre className="whitespace-pre-wrap break-words">{outputs[activeIndex]}</pre>
+              ) : (
+                <p className="text-gray-600">Run your code to see output here</p>
+              )}
+            </div>
+          </>
+        }
+      />
       )}
     </div>
   )

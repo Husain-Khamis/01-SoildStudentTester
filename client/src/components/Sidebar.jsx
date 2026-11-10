@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { activeSlot, useSaves } from '../saves'
 
 const LANGUAGES = [
   { id: 'go', name: 'Go', color: 'text-cyan-400' },
@@ -28,6 +29,7 @@ function Sidebar({
   onMockExam,
 }) {
   const [openGroups, setOpenGroups] = useState({})
+  const passed = activeSlot(useSaves())?.data[lang] ?? {}
 
   useEffect(() => {
     if (!lang) return
@@ -61,7 +63,7 @@ function Sidebar({
   const grouped = groupByLevel(questions)
 
   return (
-    <aside className="w-72 bg-gray-800 border-r border-gray-700 flex flex-col overflow-y-auto">
+    <aside className="h-full bg-gray-800 border-r border-gray-700 flex flex-col overflow-y-auto">
       <div className="p-4 border-b border-gray-700">
         <p className="text-xs text-gray-400 uppercase tracking-widest mb-3">Language</p>
         <div className="flex flex-col gap-1">
@@ -116,7 +118,7 @@ function Sidebar({
                           : 'text-gray-300 hover:bg-gray-700'
                       }`}
                     >
-                      {q.name}
+                      {q.name}{passed[q.name]?.passed && <span className={`${selectedQuestion?.id === q.id ? 'text-white' : 'text-green-400'} ml-2`} title="Passed">✓</span>}
                     </button>
                   ))}
                 </div>

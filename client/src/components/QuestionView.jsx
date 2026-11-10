@@ -1,22 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import Editor from '@monaco-editor/react'
 import { runAny, testCode } from '../api'
 import ResultBadge from './ResultBadge'
-
-const LANGUAGE_MAP = {
-  js: 'javascript',
-  go: 'go',
-  rust: 'rust'
-}
+import Workspace from './Workspace'
+import CodeTabs from './CodeTabs'
+import LongRunDialog from './LongRunDialog'
+import { useRun } from '../useRun'
+import { extractUsage } from '../usage'
+import { getExercise, saveExercise } from '../saves'
 
 function QuestionView({ question, lang }) {
   const [loaded, setLoaded] = useState({ subject: null, markdown: '' })
-  const starter = `// ${question.expectedFiles?.[0]}\n`
-  const [code, setCode] = useState(starter)
+  const file = question.expectedFiles?.[0]
+  const [saved] = useState(() => getExercise(lang, question.name))
+  const [initial] = useState(() => ({ code: saved?.code ?? `// ${file}\n`, main: saved?.main ?? null }))
+  const [code, setCode] = useState(initial.code)
+  const [mainEdit, setMainEdit] = useState(initial.main)
   const [output, setOutput] = useState('')
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
+  const run = useRun()
 
   useEffect(() => {
     if (!question) return
@@ -34,12 +37,38 @@ function QuestionView({ question, lang }) {
   const loading = loaded.subject !== question.subject
   const markdown = loaded.markdown
 
+  // The usage program only makes sense when the solution file isn't itself a program
+  const usage = /(^|\/)main\.go$|src\/main\.rs$/.test(file) ? null : extractUsage(markdown)
+  const main = usage == null ? null : (mainEdit ?? usage)
+
+  // Debounced autosave; flushed on unmount so switching questions loses nothing
+  const pending = useRef(null)
+  const flush = () => {
+    if (pending.current) saveExercise(lang, question.name, pending.current)
+    pending.current = null
+  }
+  useEffect(() => {
+    // Only save what the student changed; merely opening an exercise writes nothing
+    pending.current =
+      code === initial.code && mainEdit === initial.main ? null : { code, ...(mainEdit != null && { main: mainEdit }) }
+    const t = setTimeout(flush, 500)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, mainEdit])
+  useEffect(() => {
+    window.addEventListener('pagehide', flush)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      flush()
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   async function exec(fn) {
     setBusy(true)
     setResult(null)
     setOutput('')
     try {
-      await fn()
+      await run.track(fn)
     } catch (err) {
       setOutput(`Error: ${err.message}`)
     } finally {
@@ -47,59 +76,64 @@ function QuestionView({ question, lang }) {
     }
   }
 
-  const runCode = () => exec(async () => setOutput(await runAny(lang, question.name, code)))
+  const runCode = () => exec(async (signal) => setOutput((await runAny(lang, question.name, code, main, signal)).output))
 
   const runTests = () =>
-    exec(async () => {
-      const data = await testCode(lang, question.name, code)
-      setResult(data)
-      setOutput(data.output || 'No output')
+    exec(async (signal) => {
+      const data = await testCode(lang, question.name, code, signal)
+      if (!data.stopped) setResult(data)
+      if (data.passed) saveExercise(lang, question.name, { passed: true })
+      setOutput(data.output || (data.passed ? 'All tests passed' : 'No output'))
     })
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      <aside className="w-96 bg-gray-800 border-r border-gray-700 overflow-y-auto flex flex-col">
-        <div className="p-4 border-b border-gray-700">
-          <div className="flex items-center justify-between mb-3">
-            <h1 className="text-lg font-bold text-white">{question.name}</h1>
-            <span className="bg-green-500 text-white text-xs font-semibold px-3 py-1 rounded-full">
-              Level {question.group}
-            </span>
-          </div>
-
-          <div className="flex gap-4">
-            <div>
-              <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Difficulty</p>
-              <p className="text-white text-sm font-medium">{question.difficulty}</p>
+    <>
+    <LongRunDialog startedAt={run.startedAt} onStop={run.stop} onKeep={run.keepWaiting} />
+    <Workspace
+      id="practice"
+      description={
+        <div className="overflow-y-auto h-full">
+          <div className="p-4 border-b border-gray-700">
+            <div className="flex items-center justify-between mb-3">
+              <h1 className="text-lg font-bold text-white">{question.name}</h1>
+              <span className="bg-green-500 text-white text-xs font-semibold px-3 py-1 rounded-full">
+                Level {question.group}
+              </span>
             </div>
-            <div>
-              <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Expected Files</p>
-              <div className="flex gap-2 flex-wrap">
-                {question.expectedFiles.map((file) => (
-                  <span
-                    key={file}
-                    className="bg-gray-700 text-green-400 text-xs px-2 py-1 rounded font-mono"
-                  >
-                    {file}
-                  </span>
-                ))}
+
+            <div className="flex gap-4">
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Difficulty</p>
+                <p className="text-white text-sm font-medium">{question.difficulty}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-400 uppercase tracking-widest mb-1">Expected Files</p>
+                <div className="flex gap-2 flex-wrap">
+                  {question.expectedFiles.map((file) => (
+                    <span
+                      key={file}
+                      className="bg-gray-700 text-green-400 text-xs px-2 py-1 rounded font-mono"
+                    >
+                      {file}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div className="p-4 flex-1">
-          {loading ? (
-            <p className="text-gray-500 text-sm">Loading question...</p>
-          ) : (
-            <div className="prose prose-invert max-w-none text-sm">
-              <ReactMarkdown>{markdown}</ReactMarkdown>
-            </div>
-          )}
+          <div className="p-4">
+            {loading ? (
+              <p className="text-gray-500 text-sm">Loading question...</p>
+            ) : (
+              <div className="prose prose-invert max-w-none text-sm">
+                <ReactMarkdown>{markdown}</ReactMarkdown>
+              </div>
+            )}
+          </div>
         </div>
-      </aside>
-
-      <div className="flex flex-col flex-1 overflow-hidden">
+      }
+      toolbar={
         <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-700">
           <p className="text-xs text-gray-400 uppercase tracking-widest">Solution</p>
           <div className="flex items-center gap-2">
@@ -120,45 +154,35 @@ function QuestionView({ question, lang }) {
             </button>
           </div>
         </div>
-
-        <div className="flex-1 overflow-hidden">
-          <Editor
-            height="100%"
-            language={LANGUAGE_MAP[lang]}
-            theme="vs-dark"
-            value={code}
-            onChange={(value) => setCode(value)}
-            options={{
-              fontSize: 14,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              wordWrap: 'on',
-              quickSuggestions: false,
-              suggestOnTriggerCharacters: false,
-              acceptSuggestionOnEnter: 'off',
-              tabCompletion: 'off',
-              wordBasedSuggestions: 'off',
-              parameterHints: { enabled: false },
-              hover: { enabled: false },
-            }}
-          />
-        </div>
-
-        <div className="h-48 bg-gray-950 border-t border-gray-700 flex flex-col">
+      }
+      editor={
+        <CodeTabs
+          lang={lang}
+          id={`practice/${question.name}`}
+          file={file}
+          code={code}
+          onCode={setCode}
+          main={main}
+          onMain={setMainEdit}
+        />
+      }
+      output={
+        <>
           <div className="px-4 py-2 border-b border-gray-700 flex items-center gap-3">
             <p className="text-xs text-gray-400 uppercase tracking-widest">Output</p>
             <ResultBadge result={result} />
           </div>
-          <div className="flex-1 overflow-y-auto p-4 font-mono text-sm text-green-400">
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 font-mono text-sm text-green-400">
             {output ? (
-              <pre>{output}</pre>
+              <pre className="whitespace-pre-wrap break-words">{output}</pre>
             ) : (
               <p className="text-gray-600">Run your code to see output here</p>
             )}
           </div>
-        </div>
-      </div>
-    </div>
+        </>
+      }
+    />
+    </>
   )
 }
 
