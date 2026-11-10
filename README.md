@@ -1,4 +1,4 @@
-# 01 JS Tester
+# 01 Solid Tester
 
 # Project Incomplete (it's missing the compiler and test cases for all languages)
 
