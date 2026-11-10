@@ -21,8 +21,7 @@ function formatTime(seconds) {
 
 function MockExam({ questions, lang }) {
   const [activeIndex, setActiveIndex] = useState(0)
-  const [markdown, setMarkdown] = useState('')
-  const [loadingMarkdown, setLoadingMarkdown] = useState(false)
+  const [loaded, setLoaded] = useState({ subject: null, markdown: '' })
   const [codes, setCodes] = useState({})
   const [outputs, setOutputs] = useState({})
   const [results, setResults] = useState({})
@@ -49,21 +48,19 @@ function MockExam({ questions, lang }) {
 
   useEffect(() => {
     if (!activeQuestion) return
-    setLoadingMarkdown(true)
     fetch(`/api/questions/subject?path=${activeQuestion.subject}`)
       .then((res) => {
         if (!res.ok) throw new Error('Subject not found')
         return res.text()
       })
-      .then((data) => {
-        setMarkdown(data)
-        setLoadingMarkdown(false)
-      })
-      .catch(() => {
-        setMarkdown('Could not load question description.')
-        setLoadingMarkdown(false)
-      })
+      .then((data) => setLoaded({ subject: activeQuestion.subject, markdown: data }))
+      .catch(() =>
+        setLoaded({ subject: activeQuestion.subject, markdown: 'Could not load question description.' })
+      )
   }, [activeQuestion])
+
+  const loadingMarkdown = loaded.subject !== activeQuestion?.subject
+  const markdown = loaded.markdown
 
   function handleCodeChange(value) {
     setCodes((prev) => ({ ...prev, [activeIndex]: value }))

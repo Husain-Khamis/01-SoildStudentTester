@@ -56,7 +56,7 @@ function Questions() {
         {isMockExam ? (
           <MockExam questions={mockExamQuestions} lang={lang} />
         ) : selectedQuestion ? (
-          <QuestionView question={selectedQuestion} lang={lang} />
+          <QuestionView key={selectedQuestion.id} question={selectedQuestion} lang={lang} />
         ) : (
           <main className="flex-1 flex items-center justify-center text-gray-500">
             <p>Select a question from the sidebar to get started</p>

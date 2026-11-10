@@ -42,7 +42,7 @@ function Sidebar({
         console.error(err)
         setLoading(false)
       })
-  }, [lang])
+  }, [lang, setLoading, setQuestions])
 
   async function handleMockExam() {
     try {

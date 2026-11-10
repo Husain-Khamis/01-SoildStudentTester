@@ -1,5 +1,7 @@
 # 01 Solid Tester
 
+[![CI](https://github.com/Husain-Khamis/01-SoildStudentTester/actions/workflows/ci.yml/badge.svg)](https://github.com/Husain-Khamis/01-SoildStudentTester/actions/workflows/ci.yml)
+
 A modern web-based tester for [reboot01](https://learn.reboot01.com) students, piscines and checkpoints.
 
 ## Requirements
@@ -11,7 +13,7 @@ A modern web-based tester for [reboot01](https://learn.reboot01.com) students, p
 > This may take a moment on the first run while the image downloads.
 
 ```bash
-docker run --name js-tester -p 3000:3000 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/YOUR_USERNAME/01jstester:latest
+docker run --name solid-tester -p 3000:3000 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/husain-khamis/solid-tester:latest
 ```
 
 Then open your browser and go to `http://localhost:3000`
@@ -19,13 +21,13 @@ Then open your browser and go to `http://localhost:3000`
 To stop it:
 
 ```bash
-docker stop js-tester
+docker stop solid-tester
 ```
 
 To start it again later:
 
 ```bash
-docker start js-tester
+docker start solid-tester
 ```
 
 ## Tests and graders
@@ -41,9 +43,9 @@ Submissions are graded by 01-edu's official grader Docker images (`ghcr.io/01-ed
 When a new version is released, remove the old container and image, then run again:
 
 ```bash
-docker stop js-tester
-docker rm js-tester
-docker rmi ghcr.io/Husain-khamis/01jstester:latest
+docker stop solid-tester
+docker rm solid-tester
+docker rmi ghcr.io/husain-khamis/solid-tester:latest
 ```
 
 Then re-run the original run command above.

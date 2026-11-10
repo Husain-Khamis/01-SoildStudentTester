@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: |
+            client/package-lock.json
+            server/package-lock.json
+            e2e/package-lock.json
+      - run: npm ci && npm run lint && npm run build
+        working-directory: client
+      - run: |
+          docker pull ghcr.io/01-edu/test-go
+          docker pull ghcr.io/01-edu/module-js
+          docker pull ghcr.io/01-edu/module-rust
+      - run: npm ci && npm test
+        working-directory: server
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t solid-tester:ci .
+      - run: docker pull ghcr.io/01-edu/test-go
+      - run: docker run -d --name app -p 3000:3000 -v /var/run/docker.sock:/var/run/docker.sock solid-tester:ci
+      - run: |
+          for i in $(seq 60); do curl -sf localhost:3000/ && exit 0; sleep 1; done
+          exit 1
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - run: npm ci && npx playwright install --with-deps chromium && npx playwright test
+        working-directory: e2e
+      - if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: test-results
+          path: e2e/test-results
+          if-no-files-found: ignore
+      - if: failure()
+        run: docker logs app
+
+  publish:
+    needs: [test, smoke]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/husain-khamis/solid-tester
+          tags: |
+            type=raw,value=latest
+            type=sha
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -11,8 +11,7 @@ const LANGUAGE_MAP = {
 }
 
 function QuestionView({ question, lang }) {
-  const [markdown, setMarkdown] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [loaded, setLoaded] = useState({ subject: null, markdown: '' })
   const starter = `// ${question.expectedFiles?.[0]}\n`
   const [code, setCode] = useState(starter)
   const [output, setOutput] = useState('')
@@ -21,24 +20,19 @@ function QuestionView({ question, lang }) {
 
   useEffect(() => {
     if (!question) return
-    setLoading(true)
-    setCode(`// ${question.expectedFiles?.[0]}\n`)
-    setOutput('')
-    setResult(null)
     fetch(`/api/questions/subject?path=${question.subject}`)
       .then((res) => {
         if (!res.ok) throw new Error('Subject not found')
         return res.text()
       })
-      .then((data) => {
-        setMarkdown(data)
-        setLoading(false)
-      })
-      .catch(() => {
-        setMarkdown('Could not load question description.')
-        setLoading(false)
-      })
+      .then((data) => setLoaded({ subject: question.subject, markdown: data }))
+      .catch(() =>
+        setLoaded({ subject: question.subject, markdown: 'Could not load question description.' })
+      )
   }, [question])
+
+  const loading = loaded.subject !== question.subject
+  const markdown = loaded.markdown
 
   async function exec(fn) {
     setBusy(true)
