@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import Editor from '@monaco-editor/react'
+import { runAny, testCode } from '../api'
+import ResultBadge from './ResultBadge'
 
 const LANGUAGE_MAP = {
   js: 'javascript',
@@ -11,14 +13,18 @@ const LANGUAGE_MAP = {
 function QuestionView({ question, lang }) {
   const [markdown, setMarkdown] = useState('')
   const [loading, setLoading] = useState(false)
-  const [code, setCode] = useState('// Write your solution here\n')
+  const starter = `// ${question.expectedFiles?.[0]}\n`
+  const [code, setCode] = useState(starter)
   const [output, setOutput] = useState('')
+  const [result, setResult] = useState(null)
+  const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (!question) return
     setLoading(true)
-    setCode('// Write your solution here\n')
+    setCode(`// ${question.expectedFiles?.[0]}\n`)
     setOutput('')
+    setResult(null)
     fetch(`/api/questions/subject?path=${question.subject}`)
       .then((res) => {
         if (!res.ok) throw new Error('Subject not found')
@@ -28,45 +34,33 @@ function QuestionView({ question, lang }) {
         setMarkdown(data)
         setLoading(false)
       })
-      .catch((err) => {
+      .catch(() => {
         setMarkdown('Could not load question description.')
         setLoading(false)
       })
   }, [question])
 
-    async function runCode() {
-        setOutput('Running...')
-
-        if (lang === 'js') {
-            const logs = []
-            const originalLog = console.log
-            console.log = (...args) => logs.push(args.join(' '))
-            try {
-                const fn = new Function(code)
-                fn()
-                setOutput(logs.join('\n') || 'No output')
-            } catch (err) {
-                setOutput(`Error: ${err.message}`)
-            } finally {
-                console.log = originalLog
-            }
-            return
-        }
-
-        if (lang === 'go') {
-            try {
-                const res = await fetch('/api/questions/run', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ code, lang })
-                })
-                const data = await res.json()
-                setOutput(data.output || data.error || 'No output')
-            } catch (err) {
-                setOutput(`Error: ${err.message}`)
-            }
-        }
+  async function exec(fn) {
+    setBusy(true)
+    setResult(null)
+    setOutput('')
+    try {
+      await fn()
+    } catch (err) {
+      setOutput(`Error: ${err.message}`)
+    } finally {
+      setBusy(false)
     }
+  }
+
+  const runCode = () => exec(async () => setOutput(await runAny(lang, question.name, code)))
+
+  const runTests = () =>
+    exec(async () => {
+      const data = await testCode(lang, question.name, code)
+      setResult(data)
+      setOutput(data.output || 'No output')
+    })
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -114,16 +108,23 @@ function QuestionView({ question, lang }) {
       <div className="flex flex-col flex-1 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-700">
           <p className="text-xs text-gray-400 uppercase tracking-widest">Solution</p>
-          {lang === 'js' ? (
+          <div className="flex items-center gap-2">
+            {busy && <span className="text-xs text-gray-400">Running… (the first test per language downloads the grader image and may take a few minutes)</span>}
             <button
               onClick={runCode}
-              className="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
+              disabled={busy}
+              className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
             >
-              Run Code
+              Run
             </button>
-          ) : (
-            <span className="text-xs text-gray-500">Run code is only available for JavaScript</span>
-          )}
+            <button
+              onClick={runTests}
+              disabled={busy}
+              className="bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
+            >
+              Test
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-hidden">
@@ -150,8 +151,9 @@ function QuestionView({ question, lang }) {
         </div>
 
         <div className="h-48 bg-gray-950 border-t border-gray-700 flex flex-col">
-          <div className="px-4 py-2 border-b border-gray-700">
+          <div className="px-4 py-2 border-b border-gray-700 flex items-center gap-3">
             <p className="text-xs text-gray-400 uppercase tracking-widest">Output</p>
+            <ResultBadge result={result} />
           </div>
           <div className="flex-1 overflow-y-auto p-4 font-mono text-sm text-green-400">
             {output ? (

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import Editor from '@monaco-editor/react'
+import { runAny, testCode } from '../api'
+import ResultBadge from './ResultBadge'
 
 const THREE_HOURS = 3 * 60 * 60
 
@@ -23,6 +25,8 @@ function MockExam({ questions, lang }) {
   const [loadingMarkdown, setLoadingMarkdown] = useState(false)
   const [codes, setCodes] = useState({})
   const [outputs, setOutputs] = useState({})
+  const [results, setResults] = useState({})
+  const [busy, setBusy] = useState(false)
   const [timeLeft, setTimeLeft] = useState(THREE_HOURS)
   const [timeUp, setTimeUp] = useState(false)
 
@@ -55,7 +59,7 @@ function MockExam({ questions, lang }) {
         setMarkdown(data)
         setLoadingMarkdown(false)
       })
-      .catch((err) => {
+      .catch(() => {
         setMarkdown('Could not load question description.')
         setLoadingMarkdown(false)
       })
@@ -65,39 +69,33 @@ function MockExam({ questions, lang }) {
     setCodes((prev) => ({ ...prev, [activeIndex]: value }))
   }
 
-  async function runCode() {
-    setOutput('Running...')
+  const starter = `// ${activeQuestion?.expectedFiles?.[0]}\n`
+  const code = codes[activeIndex] ?? starter
 
-    if (lang === 'js') {
-        const logs = []
-        const originalLog = console.log
-        console.log = (...args) => logs.push(args.join(' '))
-        try {
-            const fn = new Function(code)
-            fn()
-            setOutput(logs.join('\n') || 'No output')
-        } catch (err) {
-            setOutput(`Error: ${err.message}`)
-        } finally {
-            console.log = originalLog
-        }
-        return
+  async function exec(fn) {
+    const i = activeIndex
+    const setOut = (v) => setOutputs((prev) => ({ ...prev, [i]: v }))
+    setBusy(true)
+    setResults((prev) => ({ ...prev, [i]: null }))
+    setOut('')
+    try {
+      await fn(i, setOut)
+    } catch (err) {
+      setOut(`Error: ${err.message}`)
+    } finally {
+      setBusy(false)
     }
+  }
 
-    if (lang === 'go') {
-        try {
-            const res = await fetch('/api/questions/run', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code, lang })
-            })
-            const data = await res.json()
-            setOutput(data.output || data.error || 'No output')
-        } catch (err) {
-            setOutput(`Error: ${err.message}`)
-        }
-    }
-}
+  const runCode = () =>
+    exec(async (i, setOut) => setOut(await runAny(lang, activeQuestion.name, code)))
+
+  const runTests = () =>
+    exec(async (i, setOut) => {
+      const data = await testCode(lang, activeQuestion.name, code)
+      setResults((prev) => ({ ...prev, [i]: data }))
+      setOut(data.output || 'No output')
+    })
 
   if (timeUp) {
     return (
@@ -124,7 +122,7 @@ function MockExam({ questions, lang }) {
                   : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
               }`}
             >
-              Level {item.group}
+              Level {item.group}{results[index]?.passed ? ' ✓' : ''}
             </button>
           ))}
         </div>
@@ -180,16 +178,23 @@ function MockExam({ questions, lang }) {
           <div className="flex flex-col flex-1 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-700">
               <p className="text-xs text-gray-400 uppercase tracking-widest">Solution</p>
-              {lang === 'js' ? (
+              <div className="flex items-center gap-2">
+                {busy && <span className="text-xs text-gray-400">Running… (the first test per language downloads the grader image and may take a few minutes)</span>}
                 <button
                   onClick={runCode}
-                  className="bg-green-500 hover:bg-green-600 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
+                  disabled={busy}
+                  className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
                 >
-                  Run Code
+                  Run
                 </button>
-              ) : (
-                <span className="text-xs text-gray-500">Run code is only available for JavaScript</span>
-              )}
+                <button
+                  onClick={runTests}
+                  disabled={busy}
+                  className="bg-green-500 hover:bg-green-600 disabled:opacity-50 text-white text-sm font-semibold px-4 py-1.5 rounded-lg transition-colors duration-150"
+                >
+                  Test
+                </button>
+              </div>
             </div>
 
             <div className="flex-1 overflow-hidden">
@@ -197,7 +202,7 @@ function MockExam({ questions, lang }) {
                 height="100%"
                 language={LANGUAGE_MAP[lang]}
                 theme="vs-dark"
-                value={codes[activeIndex] || '// Write your solution here\n'}
+                value={code}
                 onChange={handleCodeChange}
                 options={{
                   fontSize: 14,
@@ -216,8 +221,9 @@ function MockExam({ questions, lang }) {
             </div>
 
             <div className="h-48 bg-gray-950 border-t border-gray-700 flex flex-col">
-              <div className="px-4 py-2 border-b border-gray-700">
+              <div className="px-4 py-2 border-b border-gray-700 flex items-center gap-3">
                 <p className="text-xs text-gray-400 uppercase tracking-widest">Output</p>
+                <ResultBadge result={results[activeIndex]} />
               </div>
               <div className="flex-1 overflow-y-auto p-4 font-mono text-sm text-green-400">
                 {outputs[activeIndex] ? (
